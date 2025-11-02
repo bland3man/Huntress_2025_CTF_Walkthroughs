@@ -1,0 +1,26 @@
+# your file
+FILE="/home/bwallace/Downloads/maximum_sound.wav"
+
+# remember current defaults so we can restore later
+PRE_SINK="$(pactl info | awk -F': ' '/Default Sink/ {print $2}')"
+PRE_SRC="$(pactl info  | awk -F': ' '/Default Source/ {print $2}')"
+
+# create a null sink and capture its module id
+MOD="$(pactl load-module module-null-sink sink_name=qsstv_sink sink_properties=device.description=QSSTV_Sink)"
+echo "Loaded module id: $MOD"
+
+# make QSSTV hear the sink’s monitor; optionally route output there too
+pactl set-default-source qsstv_sink.monitor
+pactl set-default-sink   qsstv_sink
+
+# start QSSTV (it will listen to the default source you just set)
+qsstv & disown
+
+# play the WAV into the virtual sink (either paplay or aplay—pick one)
+paplay --device=qsstv_sink "$FILE" \
+ || PULSE_SINK=qsstv_sink aplay -q -D pulse "$FILE"
+
+# restore your previous defaults and remove the temp sink
+pactl set-default-sink   "$PRE_SINK"
+pactl set-default-source "$PRE_SRC"
+pactl unload-module "$MOD"
